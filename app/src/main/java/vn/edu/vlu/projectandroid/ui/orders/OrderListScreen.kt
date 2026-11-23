@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -58,9 +59,11 @@ fun OrderListScreen(
     orderRepository: OrderRepository,
     authRepository: AuthRepository,
     onOrderClick: (String) -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    onNavigateToAdmin: () -> Unit = {}
 ) {
     val orders by orderRepository.orders.collectAsState()
+    val currentUser by authRepository.currentUser.collectAsState(initial = null)
     var selectedTab by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
 
@@ -78,6 +81,15 @@ fun OrderListScreen(
             TopAppBar(
                 title = { Text("Đơn hàng") },
                 actions = {
+                    if (currentUser?.isAdmin == true) {
+                        IconButton(onClick = onNavigateToAdmin) {
+                            Icon(
+                                Icons.Filled.AdminPanelSettings,
+                                contentDescription = "Trang quản trị",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     IconButton(onClick = {
                         scope.launch {
                             authRepository.logout()

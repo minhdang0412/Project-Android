@@ -36,6 +36,10 @@ import vn.edu.vlu.projectandroid.data.repository.CartRepository
 import vn.edu.vlu.projectandroid.data.repository.OrderRepository
 import vn.edu.vlu.projectandroid.data.repository.ProductRepository
 import vn.edu.vlu.projectandroid.data.repository.WishlistRepository
+import vn.edu.vlu.projectandroid.ui.admin.AdminCategoryListScreen
+import vn.edu.vlu.projectandroid.ui.admin.AdminDashboardScreen
+import vn.edu.vlu.projectandroid.ui.admin.AdminEditProductScreen
+import vn.edu.vlu.projectandroid.ui.admin.AdminProductListScreen
 import vn.edu.vlu.projectandroid.ui.auth.EmailVerificationScreen
 import vn.edu.vlu.projectandroid.ui.auth.ForgotPasswordScreen
 import vn.edu.vlu.projectandroid.ui.auth.LoginScreen
@@ -185,6 +189,7 @@ fun AppNavGraph(
                 HomeScreen(
                     productRepository = productRepository,
                     wishlistRepository = wishlistRepository,
+                    authRepository = authRepository,
                     onProductClick = { productId ->
                         navController.navigate(Screen.ProductDetail.createRoute(productId))
                     },
@@ -194,6 +199,9 @@ fun AppNavGraph(
                             launchSingleTop = true
                             restoreState = true
                         }
+                    },
+                    onNavigateToAdmin = {
+                        navController.navigate(Screen.AdminDashboard.route)
                     }
                 )
             }
@@ -238,6 +246,9 @@ fun AppNavGraph(
                         navController.navigate(Screen.Login.route) {
                             popUpTo(0) { inclusive = true }
                         }
+                    },
+                    onNavigateToAdmin = {
+                        navController.navigate(Screen.AdminDashboard.route)
                     }
                 )
             }
@@ -299,6 +310,45 @@ fun AppNavGraph(
                 OrderDetailScreen(
                     orderId = orderId,
                     orderRepository = orderRepository,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            // Admin destinations
+            composable(Screen.AdminDashboard.route) {
+                AdminDashboardScreen(
+                    productRepository = productRepository,
+                    onNavigateToProducts = { navController.navigate(Screen.AdminProducts.route) },
+                    onNavigateToCategories = { navController.navigate(Screen.AdminCategories.route) },
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.AdminProducts.route) {
+                AdminProductListScreen(
+                    productRepository = productRepository,
+                    onNavigateToAddProduct = {
+                        navController.navigate(Screen.AdminEditProduct.createRoute("new"))
+                    },
+                    onNavigateToEditProduct = { productId ->
+                        navController.navigate(Screen.AdminEditProduct.createRoute(productId))
+                    },
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = Screen.AdminEditProduct.route,
+                arguments = listOf(navArgument("productId") { type = NavType.StringType })
+            ) { backStackEntry ->
+                val productId = backStackEntry.arguments?.getString("productId") ?: "new"
+                AdminEditProductScreen(
+                    productId = productId,
+                    productRepository = productRepository,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.AdminCategories.route) {
+                AdminCategoryListScreen(
+                    productRepository = productRepository,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

@@ -54,11 +54,14 @@ fun SearchScreen(
     var selectedSort by remember { mutableStateOf(SortOption.DEFAULT) }
     var showSortMenu by remember { mutableStateOf(false) }
     val wishlistIds by wishlistRepository.wishlistProductIds.collectAsState()
+    val allProducts by productRepository.products.collectAsState()
 
-    val results = productRepository.filterProducts(
-        query = searchQuery,
-        sortBy = selectedSort
-    )
+    val results = remember(allProducts, searchQuery, selectedSort) {
+        productRepository.filterProducts(
+            query = searchQuery,
+            sortBy = selectedSort
+        )
+    }
 
     Column(
         modifier = Modifier

@@ -35,6 +35,10 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Tablet
 import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,12 +88,21 @@ fun getCategoryIcon(iconName: String): ImageVector {
 fun HomeScreen(
     productRepository: ProductRepository,
     wishlistRepository: WishlistRepository,
+    authRepository: vn.edu.vlu.projectandroid.data.repository.AuthRepository,
     onProductClick: (String) -> Unit,
-    onSearchClick: () -> Unit
+    onSearchClick: () -> Unit,
+    onNavigateToAdmin: () -> Unit = {}
 ) {
-    val categories = productRepository.getCategories()
-    val featuredProducts = productRepository.getFeaturedProducts()
-    val bestSellers = productRepository.getBestSellerProducts()
+    val products by productRepository.products.collectAsState()
+    val categories by productRepository.categories.collectAsState()
+    val currentUser by authRepository.currentUser.collectAsState(initial = null)
+
+    val featuredProducts = remember(products) {
+        products.sortedByDescending { it.rating }.take(6)
+    }
+    val bestSellers = remember(products) {
+        products.sortedByDescending { it.reviewCount }.take(6)
+    }
     val bannerUrls = productRepository.getBannerUrls()
     val wishlistIds by wishlistRepository.wishlistProductIds.collectAsState()
 
@@ -98,6 +112,63 @@ fun HomeScreen(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // Banner Quản trị viên (nếu người dùng là Admin)
+        if (currentUser?.isAdmin == true) {
+            item(span = { GridItemSpan(2) }) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigateToAdmin() },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.AdminPanelSettings,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Bảng điều khiển Quản trị",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = "Thêm, xóa, sửa sản phẩm và danh mục",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // Search bar
         item(span = { GridItemSpan(2) }) {
             OutlinedTextField(

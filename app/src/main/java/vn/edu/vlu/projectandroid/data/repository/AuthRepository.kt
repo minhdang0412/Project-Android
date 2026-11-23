@@ -52,6 +52,7 @@ class AuthRepository(
         val USER_EMAIL = stringPreferencesKey("user_email")
         val USER_PHONE = stringPreferencesKey("user_phone")
         val USER_ADDRESS = stringPreferencesKey("user_address")
+        val USER_ROLE = stringPreferencesKey("user_role")
     }
 
     /**
@@ -73,12 +74,15 @@ class AuthRepository(
     val currentUser: Flow<User?> = context.dataStore.data.map { prefs ->
         val currentFirebaseUser = auth.currentUser
         if (currentFirebaseUser != null && currentFirebaseUser.isEmailVerified) {
+            val userEmail = prefs[USER_EMAIL] ?: (currentFirebaseUser.email ?: "")
+            val role = prefs[USER_ROLE] ?: if (userEmail.lowercase().startsWith("admin")) "ADMIN" else "USER"
             User(
                 id = prefs[USER_ID] ?: currentFirebaseUser.uid,
                 name = prefs[USER_NAME] ?: (currentFirebaseUser.displayName ?: ""),
-                email = prefs[USER_EMAIL] ?: (currentFirebaseUser.email ?: ""),
+                email = userEmail,
                 phoneNumber = prefs[USER_PHONE] ?: "",
-                address = prefs[USER_ADDRESS] ?: ""
+                address = prefs[USER_ADDRESS] ?: "",
+                role = role
             )
         } else null
     }
@@ -134,15 +138,17 @@ class AuthRepository(
             }
 
             // 4. Chuẩn bị User model & lưu vào Firestore
+            val userRole = if (trimmedEmail.startsWith("admin")) "ADMIN" else "USER"
             val user = User(
                 id = firebaseUser.uid,
                 name = trimmedName,
                 email = trimmedEmail,
                 phoneNumber = trimmedPhone,
-                address = ""
+                address = "",
+                role = userRole
             )
 
-            // Lưu Firestore (nếu có database, tối đa 1.5s không làm treo app)
+            // Lưu Firestore: ghi hồ sơ người dùng vào collection "users"
             try {
                 val userMap = hashMapOf(
                     "id" to user.id,
@@ -150,13 +156,28 @@ class AuthRepository(
                     "email" to user.email,
                     "phoneNumber" to user.phoneNumber,
                     "address" to user.address,
+                    "role" to user.role,
+                    "isEmailVerified" to firebaseUser.isEmailVerified,
                     "createdAt" to System.currentTimeMillis()
                 )
-                withTimeoutOrNull(1500) {
-                    firestore.collection("users").document(user.id).set(userMap).await()
+
+                // Gọi ghi dữ liệu vào collection "users"
+                val writeTask = firestore.collection("users").document(user.id).set(userMap)
+                writeTask.addOnSuccessListener {
+                    Log.i("AuthRepository", "✅ Đã lưu tài khoản ${user.email} vào Firestore Database thành công!")
+                }.addOnFailureListener { e ->
+                    Log.e("AuthRepository", "❌ Lỗi lưu tài khoản vào Firestore: ${e.message}", e)
+                    if (e.message?.contains("PERMISSION_DENIED", ignoreCase = true) == true) {
+                        Log.e("AuthRepository", "👉 BẠN CẦN MỞ RULES TRÊN FIREBASE CONSOLE: Cập nhật Rules thành 'allow read, write: if true;' và bấm Publish.")
+                    }
+                }
+
+                // Chờ tối đa 5 giây để đồng bộ trực tiếp lên server
+                withTimeoutOrNull(5000) {
+                    writeTask.await()
                 }
             } catch (e: Exception) {
-                Log.w("AuthRepository", "Could not save user to Firestore: ${e.message}")
+                Log.w("AuthRepository", "Firestore write timeout hoặc chặn bởi Rules: ${e.message}")
             }
 
             // Lưu thông tin người dùng vào DataStore (chưa set is_logged_in vì chưa xác thực)
@@ -166,6 +187,7 @@ class AuthRepository(
                 prefs[USER_EMAIL] = user.email
                 prefs[USER_PHONE] = user.phoneNumber
                 prefs[USER_ADDRESS] = user.address
+                prefs[USER_ROLE] = user.role
             }
 
             Result.success(user)
@@ -203,6 +225,12 @@ class AuthRepository(
             if (isVerified) {
                 context.dataStore.edit { prefs ->
                     prefs[IS_LOGGED_IN] = true
+                }
+                try {
+                    firestore.collection("users").document(user.uid)
+                        .update("isEmailVerified", true)
+                } catch (e: Exception) {
+                    Log.w("AuthRepository", "Could not update isEmailVerified: ${e.message}")
                 }
             }
             Result.success(isVerified)
@@ -251,27 +279,50 @@ class AuthRepository(
                 return Result.failure(EmailNotVerifiedException(pendingVerificationEmail))
             }
 
-            // Lấy thông tin chi tiết từ Firestore (tối đa 1.5s không làm treo app)
+            // Lấy thông tin chi tiết từ Firestore (tối đa 3s không làm treo app)
             val user = try {
-                val doc = withTimeoutOrNull(1500) {
+                val doc = withTimeoutOrNull(3000) {
                     firestore.collection("users").document(firebaseUser.uid).get().await()
                 }
+                val defaultRole = if (trimmedEmail.startsWith("admin")) "ADMIN" else "USER"
                 if (doc != null && doc.exists()) {
                     User(
                         id = firebaseUser.uid,
                         name = doc.getString("name") ?: (firebaseUser.displayName ?: ""),
                         email = doc.getString("email") ?: (firebaseUser.email ?: trimmedEmail),
                         phoneNumber = doc.getString("phoneNumber") ?: "",
-                        address = doc.getString("address") ?: ""
+                        address = doc.getString("address") ?: "",
+                        role = doc.getString("role") ?: defaultRole
                     )
                 } else {
-                    User(
+                    val newUser = User(
                         id = firebaseUser.uid,
                         name = firebaseUser.displayName ?: "",
                         email = firebaseUser.email ?: trimmedEmail,
                         phoneNumber = "",
-                        address = ""
+                        address = "",
+                        role = defaultRole
                     )
+                    // Tự động lưu tài khoản vào Firestore nếu chưa tồn tại
+                    try {
+                        val userMap = hashMapOf(
+                            "id" to newUser.id,
+                            "name" to newUser.name,
+                            "email" to newUser.email,
+                            "phoneNumber" to newUser.phoneNumber,
+                            "address" to newUser.address,
+                            "role" to newUser.role,
+                            "isEmailVerified" to firebaseUser.isEmailVerified,
+                            "createdAt" to System.currentTimeMillis()
+                        )
+                        firestore.collection("users").document(newUser.id).set(userMap)
+                            .addOnSuccessListener {
+                                Log.i("AuthRepository", "Đã tự động đồng bộ tài khoản vào Firestore khi đăng nhập")
+                            }
+                    } catch (e: Exception) {
+                        Log.w("AuthRepository", "Auto-sync to Firestore failed: ${e.message}")
+                    }
+                    newUser
                 }
             } catch (e: Exception) {
                 User(
@@ -279,7 +330,8 @@ class AuthRepository(
                     name = firebaseUser.displayName ?: "",
                     email = firebaseUser.email ?: trimmedEmail,
                     phoneNumber = "",
-                    address = ""
+                    address = "",
+                    role = if (trimmedEmail.startsWith("admin")) "ADMIN" else "USER"
                 )
             }
 
@@ -319,6 +371,7 @@ class AuthRepository(
             prefs[USER_EMAIL] = user.email
             prefs[USER_PHONE] = user.phoneNumber
             prefs[USER_ADDRESS] = user.address
+            prefs[USER_ROLE] = user.role
         }
     }
 
