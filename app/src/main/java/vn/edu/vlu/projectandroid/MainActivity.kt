@@ -27,6 +27,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Khởi tạo và kiểm tra cấu hình Firebase
+        vn.edu.vlu.projectandroid.data.FirebaseInitializer.init(applicationContext)
+
         val authRepository = AuthRepository(applicationContext)
         val productRepository = ProductRepository()
         val cartRepository = CartRepository()

@@ -1,13 +1,13 @@
 package vn.edu.vlu.projectandroid.data.repository
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.google.firebase.FirebaseException
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
@@ -21,15 +21,29 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
+import vn.edu.vlu.projectandroid.data.FirebaseInitializer
 import vn.edu.vlu.projectandroid.data.model.User
+
+class EmailNotVerifiedException(val email: String) : 
+    Exception("Email chưa được xác thực. Vui lòng kiểm tra hộp thư để kích hoạt tài khoản.")
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_prefs")
 
 class AuthRepository(
     private val context: Context,
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    customAuth: FirebaseAuth? = null,
+    customFirestore: FirebaseFirestore? = null
 ) {
+    init {
+        FirebaseInitializer.init(context)
+    }
+
+    private val auth: FirebaseAuth = customAuth ?: FirebaseAuth.getInstance()
+    private val firestore: FirebaseFirestore = customFirestore ?: FirebaseFirestore.getInstance()
+
+    // Email đang chờ xác thực để hiển thị trên màn hình xác thực
+    var pendingVerificationEmail: String = ""
 
     companion object {
         val IS_LOGGED_IN = booleanPreferencesKey("is_logged_in")
@@ -41,11 +55,13 @@ class AuthRepository(
     }
 
     /**
-     * Flow theo dõi trạng thái đăng nhập từ Firebase Auth và DataStore
+     * Flow theo dõi trạng thái đăng nhập:
+     * Người dùng chỉ được coi là đã đăng nhập khi có tài khoản VÀ email đã được xác thực
      */
     val isLoggedIn: Flow<Boolean> = callbackFlow {
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-            trySend(firebaseAuth.currentUser != null)
+            val user = firebaseAuth.currentUser
+            trySend(user != null && user.isEmailVerified)
         }
         auth.addAuthStateListener(listener)
         awaitClose { auth.removeAuthStateListener(listener) }
@@ -56,7 +72,7 @@ class AuthRepository(
      */
     val currentUser: Flow<User?> = context.dataStore.data.map { prefs ->
         val currentFirebaseUser = auth.currentUser
-        if (currentFirebaseUser != null) {
+        if (currentFirebaseUser != null && currentFirebaseUser.isEmailVerified) {
             User(
                 id = prefs[USER_ID] ?: currentFirebaseUser.uid,
                 name = prefs[USER_NAME] ?: (currentFirebaseUser.displayName ?: ""),
@@ -68,7 +84,17 @@ class AuthRepository(
     }
 
     /**
-     * Đăng ký tài khoản với Firebase Authentication và lưu dữ liệu người dùng vào Firestore
+     * Lấy email của tài khoản đang đăng nhập (kể cả chưa verify)
+     */
+    fun getCurrentUserEmail(): String {
+        return pendingVerificationEmail.ifBlank { auth.currentUser?.email ?: "" }
+    }
+
+    /**
+     * Đăng ký tài khoản:
+     * 1. Tạo user trên Firebase Auth
+     * 2. Gửi email xác thực tới hòm thư người dùng
+     * 3. Lưu hồ sơ sơ bộ vào Firestore
      */
     suspend fun register(
         name: String,
@@ -79,6 +105,7 @@ class AuthRepository(
         val trimmedEmail = email.lowercase().trim()
         val trimmedName = name.trim()
         val trimmedPhone = phone.trim()
+        pendingVerificationEmail = trimmedEmail
 
         return try {
             // 1. Tạo tài khoản trên Firebase Authentication
@@ -86,13 +113,27 @@ class AuthRepository(
             val firebaseUser = authResult.user
                 ?: return Result.failure(Exception("Không thể tạo tài khoản người dùng trên Firebase"))
 
-            // 2. Cập nhật DisplayName trên Firebase Auth profile
-            val profileUpdates = UserProfileChangeRequest.Builder()
-                .setDisplayName(trimmedName)
-                .build()
-            firebaseUser.updateProfile(profileUpdates).await()
+            // 2. Cập nhật DisplayName
+            try {
+                val profileUpdates = UserProfileChangeRequest.Builder()
+                    .setDisplayName(trimmedName)
+                    .build()
+                firebaseUser.updateProfile(profileUpdates).await()
+            } catch (e: Exception) {
+                Log.w("AuthRepository", "Could not update displayName: ${e.message}")
+            }
 
-            // 3. Chuẩn bị User model
+            // 3. Tự động gửi Email xác thực (giới hạn 3s, không làm treo)
+            try {
+                withTimeoutOrNull(3000) {
+                    firebaseUser.sendEmailVerification().await()
+                }
+                Log.d("AuthRepository", "Verification email sent to $trimmedEmail")
+            } catch (e: Exception) {
+                Log.e("AuthRepository", "Failed to send verification email", e)
+            }
+
+            // 4. Chuẩn bị User model & lưu vào Firestore
             val user = User(
                 id = firebaseUser.uid,
                 name = trimmedName,
@@ -101,19 +142,31 @@ class AuthRepository(
                 address = ""
             )
 
-            // 4. Lưu thông tin người dùng vào Cloud Firestore database (collection "users")
-            val userMap = hashMapOf(
-                "id" to user.id,
-                "name" to user.name,
-                "email" to user.email,
-                "phoneNumber" to user.phoneNumber,
-                "address" to user.address,
-                "createdAt" to System.currentTimeMillis()
-            )
-            firestore.collection("users").document(user.id).set(userMap).await()
+            // Lưu Firestore (nếu có database, tối đa 1.5s không làm treo app)
+            try {
+                val userMap = hashMapOf(
+                    "id" to user.id,
+                    "name" to user.name,
+                    "email" to user.email,
+                    "phoneNumber" to user.phoneNumber,
+                    "address" to user.address,
+                    "createdAt" to System.currentTimeMillis()
+                )
+                withTimeoutOrNull(1500) {
+                    firestore.collection("users").document(user.id).set(userMap).await()
+                }
+            } catch (e: Exception) {
+                Log.w("AuthRepository", "Could not save user to Firestore: ${e.message}")
+            }
 
-            // 5. Lưu phiên đăng nhập cục bộ
-            saveUserSession(user)
+            // Lưu thông tin người dùng vào DataStore (chưa set is_logged_in vì chưa xác thực)
+            context.dataStore.edit { prefs ->
+                prefs[USER_ID] = user.id
+                prefs[USER_NAME] = user.name
+                prefs[USER_EMAIL] = user.email
+                prefs[USER_PHONE] = user.phoneNumber
+                prefs[USER_ADDRESS] = user.address
+            }
 
             Result.success(user)
         } catch (e: Exception) {
@@ -122,21 +175,88 @@ class AuthRepository(
     }
 
     /**
-     * Đăng nhập với Firebase Authentication và đồng bộ dữ liệu từ Firestore
+     * Gửi lại email xác thực
+     */
+    suspend fun sendEmailVerification(): Result<Unit> {
+        return try {
+            val user = auth.currentUser
+                ?: return Result.failure(Exception("Không tìm thấy phiên người dùng. Vui lòng đăng nhập lại."))
+            user.sendEmailVerification().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(Exception(getReadableErrorMessage(e)))
+        }
+    }
+
+    /**
+     * Kiểm tra xem người dùng đã nhấn liên kết xác thực trong email chưa
+     */
+    suspend fun checkEmailVerified(): Result<Boolean> {
+        return try {
+            val user = auth.currentUser
+                ?: return Result.failure(Exception("Không tìm thấy người dùng."))
+            
+            // Reload user từ Firebase server để cập nhật trạng thái mới nhất
+            user.reload().await()
+            val isVerified = user.isEmailVerified
+
+            if (isVerified) {
+                context.dataStore.edit { prefs ->
+                    prefs[IS_LOGGED_IN] = true
+                }
+            }
+            Result.success(isVerified)
+        } catch (e: Exception) {
+            Result.failure(Exception(getReadableErrorMessage(e)))
+        }
+    }
+
+    /**
+     * Gửi email đặt lại mật khẩu (Quên mật khẩu)
+     */
+    suspend fun sendPasswordResetEmail(email: String): Result<Unit> {
+        val trimmedEmail = email.lowercase().trim()
+        if (trimmedEmail.isBlank()) {
+            return Result.failure(Exception("Vui lòng nhập địa chỉ email."))
+        }
+        return try {
+            auth.sendPasswordResetEmail(trimmedEmail).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(Exception(getReadableErrorMessage(e)))
+        }
+    }
+
+    /**
+     * Đăng nhập: Kiểm tra mật khẩu và trạng thái xác thực email
      */
     suspend fun login(email: String, password: String): Result<User> {
         val trimmedEmail = email.lowercase().trim()
 
         return try {
-            // 1. Đăng nhập qua Firebase Authentication
             val authResult = auth.signInWithEmailAndPassword(trimmedEmail, password).await()
             val firebaseUser = authResult.user
-                ?: return Result.failure(Exception("Đăng nhập thất bại"))
+                ?: return Result.failure(Exception("Đăng nhập thất bại."))
 
-            // 2. Lấy thông tin chi tiết từ Cloud Firestore
+            // Tải lại dữ liệu mới nhất từ server để kiểm tra emailVerified
+            firebaseUser.reload().await()
+
+            if (!firebaseUser.isEmailVerified) {
+                pendingVerificationEmail = firebaseUser.email ?: trimmedEmail
+                // Đăng xuất ngay lập tức để không lưu phiên nếu chưa xác thực email
+                auth.signOut()
+                context.dataStore.edit { prefs ->
+                    prefs.clear()
+                }
+                return Result.failure(EmailNotVerifiedException(pendingVerificationEmail))
+            }
+
+            // Lấy thông tin chi tiết từ Firestore (tối đa 1.5s không làm treo app)
             val user = try {
-                val doc = firestore.collection("users").document(firebaseUser.uid).get().await()
-                if (doc.exists()) {
+                val doc = withTimeoutOrNull(1500) {
+                    firestore.collection("users").document(firebaseUser.uid).get().await()
+                }
+                if (doc != null && doc.exists()) {
                     User(
                         id = firebaseUser.uid,
                         name = doc.getString("name") ?: (firebaseUser.displayName ?: ""),
@@ -154,7 +274,6 @@ class AuthRepository(
                     )
                 }
             } catch (e: Exception) {
-                // Fallback nếu Firestore rules chặn hoặc chưa tạo doc
                 User(
                     id = firebaseUser.uid,
                     name = firebaseUser.displayName ?: "",
@@ -164,10 +283,12 @@ class AuthRepository(
                 )
             }
 
-            // 3. Lưu phiên đăng nhập
+            // Lưu phiên đăng nhập
             saveUserSession(user)
 
             Result.success(user)
+        } catch (e: EmailNotVerifiedException) {
+            Result.failure(e)
         } catch (e: Exception) {
             Result.failure(Exception(getReadableErrorMessage(e)))
         }
@@ -205,6 +326,7 @@ class AuthRepository(
      * Chuyển đổi mã lỗi Firebase thành thông báo tiếng Việt thân thiện
      */
     private fun getReadableErrorMessage(e: Exception): String {
+        Log.e("AuthRepository", "Firebase Auth error: ${e.message}", e)
         val message = e.message ?: ""
         return when (e) {
             is FirebaseAuthWeakPasswordException -> "Mật khẩu quá yếu (yêu cầu tối thiểu 6 ký tự)"
@@ -212,16 +334,20 @@ class AuthRepository(
             is FirebaseAuthInvalidCredentialsException -> "Email hoặc mật khẩu không chính xác"
             is FirebaseNetworkException -> "Lỗi kết nối mạng đến Firebase. Vui lòng kiểm tra internet"
             else -> {
-                if (message.contains("API key not valid", ignoreCase = true) ||
-                    message.contains("CONFIGURATION_NOT_FOUND", ignoreCase = true)
-                ) {
-                    "Chưa cấu hình API Key hợp lệ trong file google-services.json từ Firebase Console"
-                } else if (message.contains("PERMISSION_DENIED", ignoreCase = true)) {
-                    "Không có quyền truy cập Firestore. Vui lòng kiểm tra Security Rules"
-                } else if (message.contains("no user record", ignoreCase = true)) {
-                    "Tài khoản không tồn tại"
-                } else {
-                    e.localizedMessage ?: "Có lỗi xảy ra, vui lòng thử lại"
+                when {
+                    message.contains("CONFIGURATION_NOT_FOUND", ignoreCase = true) ->
+                        "Chưa kích hoạt Authentication trên Firebase Console. Vui lòng vào Firebase Console > Authentication > Sign-in method và bật 'Email/Password'."
+                    message.contains("API key not valid", ignoreCase = true) ->
+                        "API Key chưa hợp lệ. Vui lòng Clean Project và Rebuild lại ứng dụng trong Android Studio."
+                    message.contains("ADMIN_ONLY_OPERATION", ignoreCase = true) ->
+                        "Chưa cho phép người dùng tự đăng ký (vào Authentication Settings tắt User signup disabled)."
+                    message.contains("PERMISSION_DENIED", ignoreCase = true) ->
+                        "Không có quyền truy cập Firestore. Vui lòng kiểm tra Security Rules (chọn Test mode)."
+                    message.contains("TOO_MANY_ATTEMPTS_TRY_LATER", ignoreCase = true) ->
+                        "Bạn đã thử quá nhiều lần. Vui lòng thử lại sau vài phút."
+                    message.contains("user-not-found", ignoreCase = true) || message.contains("no user record", ignoreCase = true) ->
+                        "Tài khoản không tồn tại"
+                    else -> e.localizedMessage ?: "Có lỗi xảy ra, vui lòng thử lại (${e.javaClass.simpleName})"
                 }
             }
         }

@@ -3,6 +3,8 @@ package vn.edu.vlu.projectandroid.navigation
 sealed class Screen(val route: String) {
     object Login : Screen("login")
     object Register : Screen("register")
+    object ForgotPassword : Screen("forgot_password")
+    object EmailVerification : Screen("email_verification")
     object Home : Screen("home")
     object Search : Screen("search")
     object Wishlist : Screen("wishlist")

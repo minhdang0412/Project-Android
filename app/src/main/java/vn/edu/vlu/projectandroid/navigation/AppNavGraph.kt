@@ -36,6 +36,8 @@ import vn.edu.vlu.projectandroid.data.repository.CartRepository
 import vn.edu.vlu.projectandroid.data.repository.OrderRepository
 import vn.edu.vlu.projectandroid.data.repository.ProductRepository
 import vn.edu.vlu.projectandroid.data.repository.WishlistRepository
+import vn.edu.vlu.projectandroid.ui.auth.EmailVerificationScreen
+import vn.edu.vlu.projectandroid.ui.auth.ForgotPasswordScreen
 import vn.edu.vlu.projectandroid.ui.auth.LoginScreen
 import vn.edu.vlu.projectandroid.ui.auth.RegisterScreen
 import vn.edu.vlu.projectandroid.ui.cart.CartScreen
@@ -136,6 +138,12 @@ fun AppNavGraph(
                     },
                     onNavigateToRegister = {
                         navController.navigate(Screen.Register.route)
+                    },
+                    onNavigateToForgotPassword = {
+                        navController.navigate(Screen.ForgotPassword.route)
+                    },
+                    onNavigateToVerification = {
+                        navController.navigate(Screen.EmailVerification.route)
                     }
                 )
             }
@@ -143,11 +151,32 @@ fun AppNavGraph(
                 RegisterScreen(
                     authRepository = authRepository,
                     onRegisterSuccess = {
-                        navController.navigate(Screen.Home.route) {
-                            popUpTo(Screen.Login.route) { inclusive = true }
+                        navController.navigate(Screen.EmailVerification.route) {
+                            popUpTo(Screen.Register.route) { inclusive = true }
                         }
                     },
                     onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.ForgotPassword.route) {
+                ForgotPasswordScreen(
+                    authRepository = authRepository,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.EmailVerification.route) {
+                EmailVerificationScreen(
+                    authRepository = authRepository,
+                    onVerificationSuccess = {
+                        navController.navigate(Screen.Login.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
+                    onBackToLogin = {
+                        navController.navigate(Screen.Login.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
                 )
             }
 
