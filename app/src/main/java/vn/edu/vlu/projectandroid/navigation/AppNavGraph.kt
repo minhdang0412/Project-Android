@@ -39,6 +39,7 @@ import vn.edu.vlu.projectandroid.data.repository.WishlistRepository
 import vn.edu.vlu.projectandroid.ui.admin.AdminCategoryListScreen
 import vn.edu.vlu.projectandroid.ui.admin.AdminDashboardScreen
 import vn.edu.vlu.projectandroid.ui.admin.AdminEditProductScreen
+import vn.edu.vlu.projectandroid.ui.admin.AdminOrderListScreen
 import vn.edu.vlu.projectandroid.ui.admin.AdminProductListScreen
 import vn.edu.vlu.projectandroid.ui.auth.EmailVerificationScreen
 import vn.edu.vlu.projectandroid.ui.auth.ForgotPasswordScreen
@@ -310,6 +311,7 @@ fun AppNavGraph(
                 OrderDetailScreen(
                     orderId = orderId,
                     orderRepository = orderRepository,
+                    authRepository = authRepository,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
@@ -318,8 +320,10 @@ fun AppNavGraph(
             composable(Screen.AdminDashboard.route) {
                 AdminDashboardScreen(
                     productRepository = productRepository,
+                    orderRepository = orderRepository,
                     onNavigateToProducts = { navController.navigate(Screen.AdminProducts.route) },
                     onNavigateToCategories = { navController.navigate(Screen.AdminCategories.route) },
+                    onNavigateToOrders = { navController.navigate(Screen.AdminOrders.route) },
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
@@ -349,6 +353,15 @@ fun AppNavGraph(
             composable(Screen.AdminCategories.route) {
                 AdminCategoryListScreen(
                     productRepository = productRepository,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.AdminOrders.route) {
+                AdminOrderListScreen(
+                    orderRepository = orderRepository,
+                    onOrderClick = { orderId ->
+                        navController.navigate(Screen.OrderDetail.createRoute(orderId))
+                    },
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

@@ -11,6 +11,8 @@ enum class OrderStatus(val displayName: String) {
 data class Order(
     val id: String = "",
     val userId: String = "",
+    val customerName: String = "",
+    val userEmail: String = "",
     val items: List<CartItem> = emptyList(),
     val subtotal: Double = 0.0,
     val shippingFee: Double = 0.0,

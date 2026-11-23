@@ -21,7 +21,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -30,12 +32,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,24 +51,35 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import vn.edu.vlu.projectandroid.data.model.OrderStatus
+import vn.edu.vlu.projectandroid.data.repository.OrderRepository
 import vn.edu.vlu.projectandroid.data.repository.ProductRepository
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminDashboardScreen(
     productRepository: ProductRepository,
+    orderRepository: OrderRepository,
     onNavigateToProducts: () -> Unit,
     onNavigateToCategories: () -> Unit,
+    onNavigateToOrders: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
     val products by productRepository.products.collectAsState()
     val categories by productRepository.categories.collectAsState()
+    val orders by orderRepository.orders.collectAsState()
 
     val totalProducts = products.size
     val totalCategories = categories.size
+    val totalOrders = orders.size
+    val pendingOrdersCount = orders.count { it.status == OrderStatus.PENDING }
     val lowStockCount = products.count { it.stockQuantity < 10 }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -111,7 +129,7 @@ fun AdminDashboardScreen(
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     AdminStatCard(
                         title = "Sản phẩm",
@@ -130,12 +148,12 @@ fun AdminDashboardScreen(
                         modifier = Modifier.weight(1f)
                     )
                     AdminStatCard(
-                        title = "Sắp hết hàng",
-                        count = lowStockCount.toString(),
-                        icon = Icons.Filled.Warning,
-                        iconTint = Color(0xFFE65100),
-                        backgroundColor = Color(0xFFFFF3E0),
-                        modifier = Modifier.weight(1f)
+                        title = "Đơn hàng",
+                        count = "$totalOrders ($pendingOrdersCount mới)",
+                        icon = Icons.Filled.ReceiptLong,
+                        iconTint = Color(0xFF8E24AA),
+                        backgroundColor = Color(0xFFF3E5F5),
+                        modifier = Modifier.weight(1.3f)
                     )
                 }
             }
@@ -147,6 +165,18 @@ fun AdminDashboardScreen(
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
                     color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            // Quản lý đơn hàng
+            item {
+                AdminActionCard(
+                    title = "Quản lý đơn hàng",
+                    subtitle = "Xem đơn mua của khách, duyệt đơn, bắt đầu giao, đổi trạng thái",
+                    icon = Icons.Filled.ReceiptLong,
+                    badge = if (pendingOrdersCount > 0) "$pendingOrdersCount Chờ duyệt" else "$totalOrders Đơn",
+                    iconColor = Color(0xFF8E24AA),
+                    onClick = onNavigateToOrders
                 )
             }
 
@@ -171,6 +201,24 @@ fun AdminDashboardScreen(
                     badge = "$totalCategories DM",
                     iconColor = Color(0xFF388E3C),
                     onClick = onNavigateToCategories
+                )
+            }
+
+            // Đồng bộ dữ liệu lên Firestore Database
+            item {
+                AdminActionCard(
+                    title = "Nạp dữ liệu mẫu lên Firestore",
+                    subtitle = "Tải toàn bộ sản phẩm và danh mục mẫu lên Cloud Firestore Database",
+                    icon = Icons.Filled.CloudUpload,
+                    badge = "Firebase",
+                    iconColor = Color(0xFFE65100),
+                    onClick = {
+                        productRepository.seedCategoriesToFirestore()
+                        productRepository.seedProductsToFirestore()
+                        scope.launch {
+                            snackbarHostState.showSnackbar("Đang tải dữ liệu sản phẩm & danh mục lên Firestore Database...")
+                        }
+                    }
                 )
             }
         }

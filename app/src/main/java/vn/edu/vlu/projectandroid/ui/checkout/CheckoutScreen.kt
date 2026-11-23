@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -34,6 +35,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,8 +75,20 @@ fun CheckoutScreen(
     val scope = rememberCoroutineScope()
 
     var address by remember { mutableStateOf(currentUser?.address ?: "") }
-    var phone by remember { mutableStateOf(currentUser?.phoneNumber ?: "") }
+    var phone by remember { mutableStateOf(currentUser?.phoneNumber?.filter { it.isDigit() } ?: "") }
     var paymentMethod by remember { mutableStateOf("COD") }
+
+    // Tự động điền số điện thoại và địa chỉ theo tài khoản khi dữ liệu người dùng được tải
+    LaunchedEffect(currentUser) {
+        currentUser?.let { user ->
+            if (phone.isBlank() && user.phoneNumber.isNotBlank()) {
+                phone = user.phoneNumber.filter { it.isDigit() }
+            }
+            if (address.isBlank() && user.address.isNotBlank()) {
+                address = user.address
+            }
+        }
+    }
 
     val paymentOptions = listOf(
         "COD" to "Thanh toán khi nhận hàng",
@@ -110,21 +125,33 @@ fun CheckoutScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 Button(
                     onClick = {
-                        if (address.isBlank() || phone.isBlank()) {
+                        val cleanPhone = phone.trim()
+                        val cleanAddress = address.trim()
+
+                        if (cleanAddress.isBlank() || cleanPhone.isBlank()) {
                             scope.launch {
                                 snackbarHostState.showSnackbar("Vui lòng nhập đầy đủ địa chỉ và số điện thoại")
                             }
                             return@Button
                         }
+                        if (cleanPhone.length < 9) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Số điện thoại không hợp lệ (tối thiểu 9 số)")
+                            }
+                            return@Button
+                        }
+
                         val order = orderRepository.placeOrder(
                             Order(
                                 userId = currentUser?.id ?: "",
+                                customerName = currentUser?.name ?: "",
+                                userEmail = currentUser?.email ?: "",
                                 items = cartItems,
                                 subtotal = cartRepository.subtotal,
                                 shippingFee = cartRepository.shippingFee,
                                 totalAmount = cartRepository.totalAmount,
-                                shippingAddress = address,
-                                phoneNumber = phone,
+                                shippingAddress = cleanAddress,
+                                phoneNumber = cleanPhone,
                                 paymentMethod = paymentMethod,
                                 status = OrderStatus.PENDING
                             )
@@ -166,9 +193,13 @@ fun CheckoutScreen(
 
             OutlinedTextField(
                 value = phone,
-                onValueChange = { phone = it },
-                label = { Text("Số điện thoại") },
+                onValueChange = { input ->
+                    phone = input.filter { it.isDigit() }
+                },
+                label = { Text("Số điện thoại *") },
+                placeholder = { Text("Ví dụ: 0912345678") },
                 leadingIcon = { Icon(Icons.Filled.Phone, contentDescription = null) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )

@@ -62,18 +62,32 @@ fun OrderListScreen(
     onLogout: () -> Unit,
     onNavigateToAdmin: () -> Unit = {}
 ) {
-    val orders by orderRepository.orders.collectAsState()
+    val allOrders by orderRepository.orders.collectAsState()
     val currentUser by authRepository.currentUser.collectAsState(initial = null)
     var selectedTab by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
 
+    // Người dùng thông thường chỉ xem đơn hàng của chính mình; Admin xem toàn bộ
+    val myOrders = remember(allOrders, currentUser) {
+        if (currentUser?.isAdmin == true) {
+            allOrders
+        } else {
+            val uid = currentUser?.id ?: ""
+            val email = currentUser?.email ?: ""
+            allOrders.filter { order ->
+                (uid.isNotBlank() && order.userId == uid) ||
+                        (email.isNotBlank() && order.userEmail.equals(email, ignoreCase = true))
+            }
+        }
+    }
+
     val tabs = listOf("Tất cả") + OrderStatus.entries.map { it.displayName }
 
     val filteredOrders = if (selectedTab == 0) {
-        orders
+        myOrders
     } else {
         val status = OrderStatus.entries[selectedTab - 1]
-        orders.filter { it.status == status }
+        myOrders.filter { it.status == status }
     }
 
     Scaffold(

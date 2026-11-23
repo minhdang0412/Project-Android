@@ -19,10 +19,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Pending
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -62,9 +68,11 @@ import java.util.Locale
 fun OrderDetailScreen(
     orderId: String,
     orderRepository: OrderRepository,
+    authRepository: vn.edu.vlu.projectandroid.data.repository.AuthRepository? = null,
     onNavigateBack: () -> Unit
 ) {
     val orders by orderRepository.orders.collectAsState()
+    val currentUser = authRepository?.currentUser?.collectAsState(initial = null)?.value
     val order = orders.find { it.id == orderId }
 
     Scaffold(
@@ -132,8 +140,14 @@ fun OrderDetailScreen(
             // Shipping info
             Text("Thông tin giao hàng", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Spacer(modifier = Modifier.height(8.dp))
+            if (order.customerName.isNotBlank()) {
+                Text("Khách hàng: ${order.customerName}", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+            if (order.userEmail.isNotBlank()) {
+                Text("Email: ${order.userEmail}", fontSize = 14.sp, color = Color.Gray)
+            }
+            Text("Số điện thoại: ${order.phoneNumber}", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
             Text("Địa chỉ: ${order.shippingAddress}", fontSize = 14.sp)
-            Text("SĐT: ${order.phoneNumber}", fontSize = 14.sp)
             Text(
                 "Thanh toán: ${
                     when (order.paymentMethod) {
@@ -210,8 +224,76 @@ fun OrderDetailScreen(
                 )
             }
 
-            // Cancel button
-            if (order.status == OrderStatus.PENDING || order.status == OrderStatus.PROCESSING) {
+            // Khu vực quản lý đơn hàng dành riêng cho Admin
+            if (currentUser?.isAdmin == true) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.AdminPanelSettings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Quản trị: Cập nhật trạng thái đơn", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (order.status == OrderStatus.PENDING) {
+                                Button(
+                                    onClick = { orderRepository.updateOrderStatus(orderId, OrderStatus.PROCESSING) },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Duyệt đơn", fontSize = 13.sp)
+                                }
+                            }
+
+                            if (order.status == OrderStatus.PROCESSING) {
+                                Button(
+                                    onClick = { orderRepository.updateOrderStatus(orderId, OrderStatus.SHIPPING) },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Filled.LocalShipping, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Bắt đầu giao", fontSize = 13.sp)
+                                }
+                            }
+
+                            if (order.status == OrderStatus.SHIPPING) {
+                                Button(
+                                    onClick = { orderRepository.updateOrderStatus(orderId, OrderStatus.DELIVERED) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF388E3C)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Đã giao hàng", fontSize = 13.sp)
+                                }
+                            }
+
+                            if (order.status != OrderStatus.DELIVERED && order.status != OrderStatus.CANCELLED) {
+                                Button(
+                                    onClick = { orderRepository.updateOrderStatus(orderId, OrderStatus.CANCELLED) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                                ) {
+                                    Text("Hủy đơn", fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Cancel button cho khách hàng thông thường
+            if (currentUser?.isAdmin != true && (order.status == OrderStatus.PENDING || order.status == OrderStatus.PROCESSING)) {
                 Spacer(modifier = Modifier.height(24.dp))
                 Button(
                     onClick = { orderRepository.cancelOrder(orderId) },
